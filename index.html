@@ -86,10 +86,13 @@ body[data-tema="bryllup"] .hero h1{font-weight:500}
 .grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:18px}
 .card{background:var(--card); color:var(--card-ink); border-radius:var(--r); overflow:hidden; box-shadow:var(--shadow); display:flex; flex-direction:column; position:relative; transition:transform .15s, opacity .2s}
 @keyframes pop{from{opacity:0; transform:translateY(8px) scale(.98)}}
-.card:hover{transform:translateY(-2px)}
+.card{cursor:pointer; transition:transform .18s ease, box-shadow .18s ease, opacity .2s; -webkit-tap-highlight-color:transparent}
+.card:hover{transform:translateY(-3px); box-shadow:0 2px 4px rgba(0,0,0,.06), 0 16px 34px rgba(0,0,0,.16)}
+.card:active, .card.picked{transform:translateY(-6px) scale(1.03); box-shadow:0 4px 8px rgba(0,0,0,.08), 0 22px 44px rgba(0,0,0,.25); z-index:2}
+.card:focus-visible{outline:3px solid var(--accent); outline-offset:2px}
 .card.fav{outline:3px solid var(--accent); outline-offset:-3px}
 .card.hidden{opacity:.45}
-.card .img{aspect-ratio:1/1; background:#fff; display:flex; align-items:center; justify-content:center; overflow:hidden; border-bottom:1px solid var(--line); cursor:zoom-in}
+.card .img{aspect-ratio:1/1; background:#fff; display:flex; align-items:center; justify-content:center; overflow:hidden; border-bottom:1px solid var(--line)}
 .card .img img{width:100%; height:100%; object-fit:contain}
 .card .img.ph{font-size:54px; background:var(--chip); cursor:default}
 .card .body{padding:14px 16px 16px; display:flex; flex-direction:column; gap:6px; flex:1}
@@ -147,6 +150,29 @@ textarea{resize:vertical; min-height:64px}
 .sheet .foot{display:flex; gap:10px; margin-top:20px}
 .check{display:flex; gap:10px; align-items:center; margin-top:14px; font-weight:500; cursor:pointer}
 .check input{width:20px; height:20px; accent-color:#2f5d50}
+.detail{position:fixed; inset:0; background:rgba(20,16,12,.6); z-index:60; display:flex; align-items:center; justify-content:center; padding:16px; animation:fade .2s ease}
+@keyframes fade{from{opacity:0}}
+.dbox{background:#fff; color:#1f1b16; border-radius:22px; width:100%; max-width:520px; max-height:92vh; overflow:auto; box-shadow:0 30px 60px rgba(0,0,0,.35); animation:up .25s ease}
+.dimg{background:#fff; display:flex; align-items:center; justify-content:center; max-height:55vh; overflow:hidden; border-bottom:1px solid #eee}
+.dimg img{max-width:100%; max-height:55vh; object-fit:contain; display:block}
+.dimg.ph{font-size:80px; padding:40px; background:#f4f1ec}
+.dtxt{padding:18px 20px calc(20px + env(safe-area-inset-bottom))}
+.dtxt h2{font-family:'Fraunces',serif; font-size:24px; margin:4px 0 6px; line-height:1.2}
+.dprice{font-weight:700; font-size:20px; color:#2f5d50}
+.dtxt p{color:#5f574d; line-height:1.5; white-space:pre-line}
+.dfav{display:inline-block; background:#2f5d50; color:#fff; font-weight:700; font-size:13px; padding:4px 10px; border-radius:999px}
+.dbtns{display:flex; flex-direction:column; gap:10px; margin-top:16px}
+.btn.big{padding:16px; font-size:17px; border-radius:14px}
+.dbox .btn.sec{background:#efe9e0; color:#4a443c}
+.dbox .btn.pri{background:#2f5d50; color:#fff}
+.plist{display:flex; flex-direction:column; gap:8px}
+.prow{display:flex; align-items:center; gap:8px}
+.prow .opt span{display:block}
+.pnum{width:20px; font-weight:700; color:#857b6d}
+.prow .tbtn{background:#efe9e0; box-shadow:none; width:40px; height:40px}
+.pricebox{position:relative}
+.pricebox input{padding-right:44px}
+.pricebox span{position:absolute; right:14px; top:50%; transform:translateY(-50%); color:#857b6d; font-weight:700; pointer-events:none}
 .zoom{position:fixed; inset:0; background:rgba(0,0,0,.85); display:flex; align-items:center; justify-content:center; z-index:70; padding:20px; cursor:zoom-out}
 .zoom img{max-width:100%; max-height:100%; border-radius:10px; background:#fff}
 .spin{display:inline-block; width:14px; height:14px; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:sp .7s linear infinite}
@@ -247,6 +273,7 @@ const state = {
   unlocked: !CONFIG.kode || ls.get("onskeliste-kode") === CONFIG.kode,
   // I redigér-tilstand styres tema/personer af del-indstillingerne, så du ser præcis det gæsterne ser
   share: ls.get("onskeliste-del", { vis: CONFIG.persons.map(p => p.id), tema: "jul", dato: nextDate(12, 24) }),
+  order: (() => { const o = ls.get("onskeliste-raekkefolge", []).filter(id => person(id)); CONFIG.persons.forEach(p => { if (!o.includes(p.id)) o.push(p.id); }); return o; })(),
   tab: null
 };
 if (VIEW) {
@@ -255,7 +282,8 @@ if (VIEW) {
   state.tema = THEMES[params.get("tema")] ? params.get("tema") : "";
   state.dato = /^\d{4}-\d{2}-\d{2}$/.test(params.get("dato") || "") ? params.get("dato") : "";
 } else {
-  state.vis = CONFIG.persons.map(p => p.id);
+  state.vis = state.order;
+  state.share.vis = state.order.filter(id => state.share.vis.includes(id));
   state.tema = state.share.tema;
   state.dato = state.share.dato;
 }
@@ -336,7 +364,7 @@ function render() {
   if (!VIEW && !state.unlocked) return renderLock();
 
   const t = THEMES[state.tema];
-  const tabs = VIEW ? state.vis : CONFIG.persons.map(p => p.id);
+  const tabs = VIEW ? state.vis : state.order;
   const list = wishesFor(state.tab);
   const cd = countdown();
 
@@ -350,7 +378,7 @@ function render() {
     <header class="hero">
       <div class="icon">${t ? t.icon : "🎁"}</div>
       <h1>${esc(heroTitle())}</h1>
-      ${VIEW ? `<p>Tryk på et billede for at se det stort, eller på “Se varen” for at finde den.</p>` : ""}
+      ${VIEW ? `<p>Tryk på et ønske for at se det større.</p>` : ""}
       ${cd ? `<div class="count">${cd}</div>` : ""}
       ${greeting() ? `<p class="greet">${esc(greeting())}</p>` : ""}
       ${VIEW ? `<div><span class="live"><i></i> Opdateres automatisk</span></div>` : ""}
@@ -368,10 +396,9 @@ function render() {
   `;
 
   $("#app").querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { state.tab = b.dataset.tab; ls.set("onskeliste-fane", state.tab); render(); });
-  $("#app").querySelectorAll("[data-zoom]").forEach(el => el.onclick = () => {
-    const z = document.createElement("div"); z.className = "zoom";
-    z.innerHTML = `<img src="${esc(el.dataset.zoom)}" alt="">`; z.onclick = () => z.remove();
-    document.body.appendChild(z);
+  $("#app").querySelectorAll(".card[data-id]").forEach(c => c.onclick = e => {
+    if (e.target.closest("a,button")) return;
+    if (VIEW) showWish(c.dataset.id, c); else editWish(c.dataset.id);
   });
   if (!VIEW) {
     if ($("#add")) $("#add").onclick = () => editWish(null);
@@ -389,7 +416,7 @@ function render() {
 function card(w, i, list) {
   const hiddenHere = !VIEW && state.tema && !showsFor(w, state.tema);
   const occ = (w.occasions || []).map(o => THEMES[o]?.label).filter(Boolean);
-  return `<article class="card ${w.fav ? "fav" : ""} ${hiddenHere ? "hidden" : ""}">
+  return `<article class="card ${w.fav ? "fav" : ""} ${hiddenHere ? "hidden" : ""}" data-id="${w.id}" tabindex="0">
     ${w.fav ? `<div class="badge">⭐<span> Største ønske</span></div>` : ""}
     ${!VIEW ? `<div class="tools">
       <button class="tbtn" data-mv="${w.id}" data-dir="-1" ${i === 0 ? "disabled" : ""} aria-label="Flyt frem">←</button>
@@ -397,10 +424,10 @@ function card(w, i, list) {
       <button class="tbtn" data-fav="${w.id}" aria-label="Største ønske">${w.fav ? "⭐" : "☆"}</button>
       <button class="tbtn" data-edit="${w.id}" aria-label="Ret">✏️</button>
     </div>` : ""}
-    <div class="img ${w.image ? "" : "ph"}" ${w.image ? `data-zoom="${esc(w.image)}"` : ""}>${w.image ? `<img src="${esc(w.image)}" alt="" loading="lazy" onerror="this.parentNode.classList.add('ph');this.replaceWith('🎁')">` : "🎁"}</div>
+    <div class="img ${w.image ? "" : "ph"}">${w.image ? `<img src="${esc(w.image)}" alt="" loading="lazy" onerror="this.parentNode.classList.add('ph');this.replaceWith('🎁')">` : "🎁"}</div>
     <div class="body">
       <h3>${esc(w.title || "Ønske")}</h3>
-      ${w.price ? `<div class="price">${esc(w.price)}</div>` : ""}
+      ${w.price ? `<div class="price">${esc(fmtPrice(w.price))}</div>` : ""}
       ${w.note ? `<p class="note">${esc(w.note)}</p>` : ""}
       ${hiddenHere ? `<p class="note"><b>Vises ikke til ${esc(THEMES[state.tema].label.toLowerCase())}</b></p>` : ""}
       ${!VIEW && occ.length ? `<p class="note">Kun til: ${esc(occ.join(", "))}</p>` : ""}
@@ -456,28 +483,46 @@ function shareText() {
 function openShare() {
   const m = modal(`
     <h2>Del ønskelisten</h2>
-    <span class="lbl">Hvem skal være med?</span>
-    <div class="opts">${CONFIG.persons.map(p => `<label class="opt"><input type="checkbox" name="sv" value="${p.id}" ${state.share.vis.includes(p.id) ? "checked" : ""}><span>${p.emoji} ${esc(p.name)}</span></label>`).join("")}</div>
+    <span class="lbl">Hvem skal være med – og i hvilken rækkefølge?</span>
+    <div class="plist" id="plist"></div>
     <span class="lbl">Anledning og tema</span>
     <div class="opts">
       ${Object.entries(THEMES).map(([k, t]) => `<label class="opt"><input type="radio" name="st" value="${k}" ${state.share.tema === k ? "checked" : ""}><span>${t.icon} ${t.label}</span></label>`).join("")}
       <label class="opt"><input type="radio" name="st" value="" ${state.share.tema === "" ? "checked" : ""}><span>Intet tema</span></label>
     </div>
-    <label class="lbl" for="sd">Dato (valgfri – viser “Om X dage”)</label>
+    <label class="lbl" for="sd">Dato (valgfri – viser fx “35 dage til jul”)</label>
     <input type="date" id="sd" value="${esc(state.share.dato)}">
-    <p class="hint">Jul: vælg alle tre, så får hver sin fane. Fødselsdag: vælg kun den der har fødselsdag. Linket viser kun de ønsker der passer til anledningen, og opdaterer sig selv når du retter.</p>
+    <p class="hint">Den øverste står først. Jul: vælg alle tre, så får hver sin fane. Fødselsdag: vælg kun den der har fødselsdag. Linket viser kun de ønsker der passer til anledningen, og opdaterer sig selv når du retter.</p>
     <div class="sharebtns">
-      <button class="btn msg wide" id="sm">💬 Send på Messenger</button>
+      <button class="btn msg wide" id="sm">💬 Send på Messenger / del</button>
       <button class="btn sec" id="sw">WhatsApp</button>
       <button class="btn sec" id="ss">SMS</button>
       <button class="btn sec" id="sc">Kopiér link</button>
-      ${navigator.share ? `<button class="btn sec" id="sn">Andet…</button>` : `<a class="btn sec" id="so" target="_blank" rel="noopener">Se som gæst</a>`}
+      <a class="btn sec" id="so" target="_blank" rel="noopener">Se som gæst</a>
     </div>
     <div class="foot"><button class="btn pri grow" data-x>Færdig</button></div>
   `);
 
+  const drawPersons = () => {
+    m.querySelector("#plist").innerHTML = state.order.map((id, i) => {
+      const p = person(id);
+      return `<div class="prow">
+        <span class="pnum">${i + 1}.</span>
+        <label class="opt grow"><input type="checkbox" name="sv" value="${id}" ${state.share.vis.includes(id) ? "checked" : ""}><span>${p.emoji} ${esc(p.name)}</span></label>
+        <button class="tbtn" data-po="${i}" data-d="-1" ${i === 0 ? "disabled" : ""} aria-label="Flyt op">↑</button>
+        <button class="tbtn" data-po="${i}" data-d="1" ${i === state.order.length - 1 ? "disabled" : ""} aria-label="Flyt ned">↓</button>
+      </div>`;
+    }).join("");
+    m.querySelectorAll("[name=sv]").forEach(i => i.onchange = () => upd(false));
+    m.querySelectorAll("[data-po]").forEach(b => b.onclick = () => {
+      const i = +b.dataset.po, j = i + +b.dataset.d;
+      [state.order[i], state.order[j]] = [state.order[j], state.order[i]];
+      ls.set("onskeliste-raekkefolge", state.order);
+      drawPersons(); upd(false);
+    });
+  };
   const upd = (temaChanged) => {
-    state.share.vis = [...m.querySelectorAll("[name=sv]:checked")].map(i => i.value);
+    state.share.vis = state.order.filter(id => m.querySelector(`[name=sv][value="${id}"]`).checked);
     if (!state.share.vis.length) state.share.vis = [state.tab];
     const nt = (m.querySelector("[name=st]:checked") || {}).value || "";
     if (temaChanged && nt !== state.share.tema) {
@@ -491,7 +536,7 @@ function openShare() {
     render();
     const so = m.querySelector("#so"); if (so) so.href = shareLink();
   };
-  m.querySelectorAll("[name=sv]").forEach(i => i.onchange = () => upd(false));
+  drawPersons();
   m.querySelectorAll("[name=st]").forEach(i => i.onchange = () => upd(true));
   m.querySelector("#sd").onchange = () => upd(false);
   const so = m.querySelector("#so"); if (so) so.href = shareLink();
@@ -501,15 +546,16 @@ function openShare() {
     catch { const i = document.createElement("input"); i.value = shareLink(); document.body.appendChild(i); i.select(); document.execCommand("copy"); i.remove(); }
   };
   m.querySelector("#sm").onclick = async () => {
-    const link = shareLink();
-    if (MOBILE) { location.href = "fb-messenger://share/?link=" + encodeURIComponent(link); }
-    else { await copy(); toast("Linket er kopieret – indsæt det i Messenger", 3500); window.open("https://www.messenger.com/", "_blank"); }
+    if (navigator.share) {
+      // Åbner telefonens egen del-menu – vælg Messenger og hvem den skal sendes til
+      try { await navigator.share({ title: heroTitle(), text: shareText(), url: shareLink() }); } catch {}
+    } else {
+      await copy(); toast("Linket er kopieret – indsæt det i Messenger", 3500); window.open("https://www.messenger.com/", "_blank");
+    }
   };
   m.querySelector("#sw").onclick = () => window.open("https://wa.me/?text=" + encodeURIComponent(shareText() + "\n" + shareLink()), "_blank");
   m.querySelector("#ss").onclick = () => { location.href = "sms:?&body=" + encodeURIComponent(shareText() + " " + shareLink()); };
   m.querySelector("#sc").onclick = async () => { await copy(); toast("Linket er kopieret"); };
-  const sn = m.querySelector("#sn");
-  if (sn) sn.onclick = () => navigator.share({ title: heroTitle(), text: shareText(), url: shareLink() }).catch(() => {});
 }
 
 /* ---------- Tilføj / ret ønske ---------- */
@@ -532,7 +578,7 @@ function editWish(id) {
     <label class="lbl" for="ft">Hvad ønsker du?</label>
     <input type="text" id="ft" placeholder="Fx Blå hættetrøje str. M" value="${esc(w.title || "")}">
     <label class="lbl" for="fp">Pris (valgfri)</label>
-    <input type="text" id="fp" placeholder="Fx ca. 299 kr." value="${esc(w.price || "")}">
+    <div class="pricebox"><input type="text" id="fp" inputmode="decimal" placeholder="Fx 299" value="${esc(cleanPrice(w.price))}"><span>kr.</span></div>
     <label class="lbl" for="fn">Note (valgfri)</label>
     <textarea id="fn" placeholder="Størrelse, farve, hvor den kan købes…">${esc(w.note || "")}</textarea>
     <label class="check"><input type="checkbox" id="fv" ${w.fav ? "checked" : ""}> ⭐ Mit største ønske</label>
@@ -546,7 +592,7 @@ function editWish(id) {
       <button class="btn sec grow" data-x type="button">Annullér</button>
       <button class="btn pri grow" id="fs" type="button">Gem</button>
     </div>
-  `);
+  `, { backdrop: false });
 
   const pv = m.querySelector("#pv");
   const showImg = () => pv.innerHTML = image
@@ -589,7 +635,7 @@ function editWish(id) {
 
   m.querySelector("#fs").onclick = async () => {
     const data = {
-      url: fu.value.trim(), title: ft.value.trim(), price: fp.value.trim(),
+      url: fu.value.trim(), title: ft.value.trim(), price: cleanPrice(fp.value),
       note: m.querySelector("#fn").value.trim(), fav: m.querySelector("#fv").checked,
       person: m.querySelector("#fw").value,
       occasions: [...m.querySelectorAll("[name=fo]:checked")].map(i => i.value),
@@ -613,9 +659,15 @@ function editWish(id) {
   };
 }
 
+function fmtPrice(p) {
+  p = String(p || "").trim();
+  if (!p) return "";
+  return /(kr\.?|dkk|,-)$/i.test(p) ? p : p + " kr.";
+}
+function cleanPrice(p) { return String(p || "").trim().replace(/\s*(kr\.?|dkk|,-)$/i, "").trim(); }
 function findPrice(s) {
   const m = s.match(/(\d{1,3}(?:[.\s]\d{3})*(?:,\d{2})?)\s?(kr\.?|DKK)/i) || s.match(/(?:kr\.?|DKK)\s?(\d{1,3}(?:[.\s]\d{3})*(?:,\d{2})?)/i);
-  return m ? (m[1].replace(/\s/g, ".") + " kr.") : "";
+  return m ? m[1].replace(/\s/g, ".") : "";
 }
 function compress(file, max = 1000, q = 0.78) {
   return new Promise((res, rej) => {
@@ -632,11 +684,54 @@ function compress(file, max = 1000, q = 0.78) {
     img.onerror = rej; img.src = u;
   });
 }
-function modal(html) {
+/* Vinduer lukkes med telefonens tilbage-knap/-swipe i stedet for at lukke appen */
+const overlays = [];
+function openOverlay(el) {
+  document.body.appendChild(el); overlays.push(el);
+  history.pushState({ overlay: overlays.length }, "");
+}
+function closeOverlay(el) {
+  if (!el || !el.isConnected) return;
+  if (overlays.at(-1) === el) history.back(); else { Element.prototype.remove.call(el); overlays.splice(overlays.indexOf(el), 1); }
+}
+addEventListener("popstate", () => {
+  const el = overlays.pop();
+  if (el) { Element.prototype.remove.call(el); document.querySelectorAll(".card.picked").forEach(c => c.classList.remove("picked")); }
+});
+function modal(html, opts = {}) {
   const m = document.createElement("div");
   m.className = "modal"; m.innerHTML = `<div class="sheet">${html}</div>`;
-  m.addEventListener("click", e => { if (e.target === m || e.target.closest("[data-x]")) m.remove(); });
-  document.body.appendChild(m); return m;
+  m.close = () => closeOverlay(m);
+  m.remove = m.close;
+  // Luk kun ved klik udenfor hvis både tryk og slip skete udenfor (og ikke i formularer)
+  let downOutside = false;
+  m.addEventListener("pointerdown", e => { downOutside = e.target === m; });
+  m.addEventListener("click", e => {
+    if (e.target.closest("[data-x]")) return m.close();
+    if (opts.backdrop !== false && e.target === m && downOutside) m.close();
+  });
+  openOverlay(m); return m;
+}
+function showWish(id, cardEl) {
+  const w = state.wishes.find(x => x.id === id); if (!w) return;
+  if (cardEl) cardEl.classList.add("picked");
+  const d = document.createElement("div");
+  d.className = "detail";
+  d.innerHTML = `<div class="dbox">
+    ${w.image ? `<div class="dimg"><img src="${esc(w.image)}" alt=""></div>` : `<div class="dimg ph">🎁</div>`}
+    <div class="dtxt">
+      ${w.fav ? `<div class="dfav">⭐ Største ønske</div>` : ""}
+      <h2>${esc(w.title || "Ønske")}</h2>
+      ${w.price ? `<div class="dprice">${esc(fmtPrice(w.price))}</div>` : ""}
+      ${w.note ? `<p>${esc(w.note)}</p>` : ""}
+      <div class="dbtns">
+        ${w.url ? `<a class="btn pri big" href="${esc(w.url)}" target="_blank" rel="noopener">Se varen i butikken ↗</a>` : ""}
+        <button class="btn sec big" data-close>← Tilbage til ønskerne</button>
+      </div>
+    </div>
+  </div>`;
+  d.addEventListener("click", e => { if (e.target === d || e.target.closest("[data-close]")) closeOverlay(d); });
+  openOverlay(d);
 }
 
 /* ---------- Start ---------- */
