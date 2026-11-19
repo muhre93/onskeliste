@@ -242,7 +242,13 @@ function demoStore() {
     subscribe(cb) { subs.push(cb); cb(load()); },
     async add(w) { const a = load(); a.push({ ...w, id: crypto.randomUUID() }); save(a); },
     async update(id, p) { save(load().map(w => w.id === id ? { ...w, ...p } : w)); },
-    async remove(id) { save(load().filter(w => w.id !== id)); }
+    async remove(id) { save(load().filter(w => w.id !== id)); },
+    subscribeSettings(cb) {
+      const K = "onskeliste-demo-indst"; cb(ls.get(K, {}));
+      addEventListener("storage", e => { if (e.key === K) cb(ls.get(K, {})); });
+      this._setCb = cb;
+    },
+    async setSettings(p) { const K = "onskeliste-demo-indst"; const v = { ...ls.get(K, {}), ...p }; ls.set(K, v); this._setCb && this._setCb(v); }
   };
 }
 async function firebaseStore() {
@@ -256,12 +262,15 @@ async function firebaseStore() {
   return {
     subscribe(cb) {
       fs.onSnapshot(col,
-        s => cb(s.docs.map(d => ({ id: d.id, ...d.data() }))),
+        s => cb(s.docs.filter(d => d.id !== "_indstillinger").map(d => ({ id: d.id, ...d.data() }))),
         e => { console.error(e); toast("Kunne ikke hente ønsker (" + e.code + ")"); });
     },
     add: w => fs.addDoc(col, w),
     update: (id, p) => fs.updateDoc(fs.doc(db, "onsker", id), p),
-    remove: id => fs.deleteDoc(fs.doc(db, "onsker", id))
+    remove: id => fs.deleteDoc(fs.doc(db, "onsker", id)),
+    // Fælles indstillinger (fx rækkefølgen på navne) gemmes som et særligt dokument
+    subscribeSettings(cb) { fs.onSnapshot(fs.doc(db, "onsker", "_indstillinger"), d => cb(d.exists() ? d.data() : {}), e => console.warn(e)); },
+    setSettings: p => fs.setDoc(fs.doc(db, "onsker", "_indstillinger"), p, { merge: true })
   };
 }
 
@@ -279,6 +288,7 @@ const state = {
 if (VIEW) {
   const v = params.get("vis").split(",").filter(id => person(id));
   state.vis = v.length ? v : CONFIG.persons.map(p => p.id);
+  state.order = [...state.vis, ...CONFIG.persons.map(p => p.id).filter(id => !state.vis.includes(id))];
   state.tema = THEMES[params.get("tema")] ? params.get("tema") : "";
   state.dato = /^\d{4}-\d{2}-\d{2}$/.test(params.get("dato") || "") ? params.get("dato") : "";
 } else {
@@ -287,7 +297,7 @@ if (VIEW) {
   state.tema = state.share.tema;
   state.dato = state.share.dato;
 }
-state.tab = ls.get("onskeliste-fane", null);
+state.tab = VIEW ? null : ls.get("onskeliste-fane", null);
 if (!state.vis.includes(state.tab)) state.tab = state.vis[0];
 
 const showsFor = (w, tema) => !tema || !w.occasions || !w.occasions.length || w.occasions.includes(tema);
@@ -364,7 +374,7 @@ function render() {
   if (!VIEW && !state.unlocked) return renderLock();
 
   const t = THEMES[state.tema];
-  const tabs = VIEW ? state.vis : state.order;
+  const tabs = VIEW ? state.order.filter(id => state.vis.includes(id)) : state.order;
   const list = wishesFor(state.tab);
   const cd = countdown();
 
@@ -395,7 +405,7 @@ function render() {
       : `<div class="empty"><div class="e">${t ? t.icon : "🎁"}</div><p>Der er ingen ønsker her endnu.</p></div>`}
   `;
 
-  $("#app").querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { state.tab = b.dataset.tab; ls.set("onskeliste-fane", state.tab); render(); });
+  $("#app").querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { state.tab = b.dataset.tab; state.tabChosen = true; ls.set("onskeliste-fane", state.tab); render(); });
   $("#app").querySelectorAll(".card[data-id]").forEach(c => c.onclick = e => {
     if (e.target.closest("a,button")) return;
     if (VIEW) showWish(c.dataset.id, c); else editWish(c.dataset.id);
@@ -518,6 +528,7 @@ function openShare() {
       const i = +b.dataset.po, j = i + +b.dataset.d;
       [state.order[i], state.order[j]] = [state.order[j], state.order[i]];
       ls.set("onskeliste-raekkefolge", state.order);
+      store.setSettings({ order: [...state.order] }).catch(e => { console.error(e); toast("Kunne ikke gemme rækkefølgen"); });
       drawPersons(); upd(false);
     });
   };
@@ -573,6 +584,7 @@ function editWish(id) {
     <div class="imgbtns">
       <label class="btn sec">📷 Tag billede<input type="file" accept="image/*" capture="environment" id="fc" hidden></label>
       <label class="btn sec">🖼️ Vælg billede<input type="file" accept="image/*" id="fg" hidden></label>
+      <button class="btn sec" id="fx2" type="button">📋 Indsæt billede</button>
       <button class="btn sec" id="fr" type="button">Fjern billede</button>
     </div>
     <label class="lbl" for="ft">Hvad ønsker du?</label>
@@ -597,7 +609,7 @@ function editWish(id) {
   const pv = m.querySelector("#pv");
   const showImg = () => pv.innerHTML = image
     ? `<img src="${esc(image)}" alt="" onerror="this.outerHTML='<div class=ph>Billedet kunne ikke vises – tag et billede i stedet</div>'">`
-    : `<div class="ph">Indsæt et link, så hentes billedet automatisk,<br>eller tag et billede med telefonen</div>`;
+    : `<div class="ph">Indsæt et link, så hentes billedet automatisk,<br>tag et billede med telefonen,<br>eller tryk Ctrl+V for at indsætte et udklip</div>`;
   showImg();
 
   const fu = m.querySelector("#fu"), ft = m.querySelector("#ft"), fp = m.querySelector("#fp"), ff = m.querySelector("#ff");
@@ -617,7 +629,31 @@ function editWish(id) {
     finally { ff.disabled = false; ff.textContent = "Hent"; }
   };
   ff.onclick = fetchIt;
-  fu.addEventListener("paste", () => setTimeout(fetchIt, 50));
+  fu.addEventListener("paste", e => { if (!imageFromClipboard(e)) setTimeout(fetchIt, 50); });
+
+  // Ctrl+V hvor som helst i vinduet (fx fra Klippeværktøj / Win+Shift+S)
+  const useBlob = async blob => {
+    try { image = await compress(blob); showImg(); toast("Billedet er sat ind"); }
+    catch { toast("Kunne ikke læse billedet"); }
+  };
+  function imageFromClipboard(e) {
+    const item = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith("image/"));
+    if (!item) return false;
+    e.preventDefault(); useBlob(item.getAsFile()); return true;
+  }
+  m.addEventListener("paste", e => { if (e.target !== fu) imageFromClipboard(e); });
+  m.querySelector("#fx2").onclick = async () => {
+    try {
+      const items = await navigator.clipboard.read();
+      for (const it of items) {
+        const type = it.types.find(t => t.startsWith("image/"));
+        if (type) return useBlob(await it.getType(type));
+      }
+      toast("Der er intet billede i udklipsholderen – tag et udklip først");
+    } catch {
+      toast("Tryk Ctrl+V (eller hold fingeren og vælg Sæt ind) for at indsætte billedet", 4000);
+    }
+  };
 
   const onFile = async e => {
     const f = e.target.files[0]; if (!f) return;
@@ -740,6 +776,15 @@ let store;
   render();
   try { store = DEMO ? demoStore() : await firebaseStore(); }
   catch (e) { console.error(e); toast("Kunne ikke forbinde til databasen"); return; }
+  store.subscribeSettings(st => {
+    const o = (st.order || []).filter(id => person(id));
+    if (!o.length) return;
+    CONFIG.persons.forEach(p => { if (!o.includes(p.id)) o.push(p.id); });
+    state.order.splice(0, state.order.length, ...o);   // samme array, så redigér-siden følger med
+    if (!VIEW) { ls.set("onskeliste-raekkefolge", state.order); state.share.vis = state.order.filter(id => state.share.vis.includes(id)); }
+    else if (!state.tabChosen) state.tab = state.order.filter(id => state.vis.includes(id))[0];
+    if (VIEW || !document.querySelector(".modal")) render();
+  });
   store.subscribe(ws => {
     state.wishes = ws; state.loaded = true;
     // Gæstevisning opdateres altid live; redigér-siden venter hvis et vindue er åbent
